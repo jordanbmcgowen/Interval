@@ -1,0 +1,7 @@
+{
+  "name": "Interval",
+  "description": "A sleek, professional interval timer with audible alerts, customizable durations, and automatic color cycling for focus and productivity.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
