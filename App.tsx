@@ -153,6 +153,20 @@ const App: React.FC = () => {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   useEffect(() => {
+    const unlockAudio = () => {
+      audioService.unlock();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        audioService.unlock();
+      }
+    };
+
+    document.addEventListener('touchstart', unlockAudio, { passive: true });
+    document.addEventListener('pointerdown', unlockAudio, { passive: true });
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
     const worker = new Worker(URL.createObjectURL(blob));
     workerRef.current = worker;
@@ -189,6 +203,9 @@ const App: React.FC = () => {
     });
 
     return () => {
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('pointerdown', unlockAudio);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       worker.terminate();
       releaseWakeLock();
       audioService.disableBackgroundMode();
