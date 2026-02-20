@@ -154,35 +154,19 @@ const App: React.FC = () => {
   const statusRef = useRef<TimerStatus>(TimerStatus.IDLE);
 
   useEffect(() => {
-    statusRef.current = state.status;
-  }, [state.status]);
-
-  useEffect(() => {
-    const recoverAudio = () => {
-      if (statusRef.current === TimerStatus.RUNNING) {
-        audioService.recoverForActiveSession();
-      } else {
-        audioService.unlock();
-      }
+    const unlockAudio = () => {
+      audioService.unlock();
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        recoverAudio();
+        audioService.unlock();
       }
     };
 
-    document.addEventListener('touchstart', recoverAudio, { passive: true });
-    document.addEventListener('pointerdown', recoverAudio, { passive: true });
-    window.addEventListener('focus', recoverAudio);
-    window.addEventListener('pageshow', recoverAudio);
+    document.addEventListener('touchstart', unlockAudio, { passive: true });
+    document.addEventListener('pointerdown', unlockAudio, { passive: true });
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    const healthCheckId = window.setInterval(() => {
-      if (statusRef.current === TimerStatus.RUNNING) {
-        audioService.recoverForActiveSession();
-      }
-    }, 15000);
 
     const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
     const worker = new Worker(URL.createObjectURL(blob));
@@ -220,12 +204,9 @@ const App: React.FC = () => {
     });
 
     return () => {
-      document.removeEventListener('touchstart', recoverAudio);
-      document.removeEventListener('pointerdown', recoverAudio);
-      window.removeEventListener('focus', recoverAudio);
-      window.removeEventListener('pageshow', recoverAudio);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('pointerdown', unlockAudio);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.clearInterval(healthCheckId);
       worker.terminate();
       releaseWakeLock();
       audioService.disableBackgroundMode();
