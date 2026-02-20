@@ -164,6 +164,8 @@ const App: React.FC = () => {
       } else {
         audioService.unlock();
       }
+    const unlockAudio = () => {
+      audioService.unlock();
     };
 
     const handleVisibilityChange = () => {
@@ -183,6 +185,14 @@ const App: React.FC = () => {
         audioService.recoverForActiveSession();
       }
     }, 15000);
+
+        audioService.unlock();
+      }
+    };
+
+    document.addEventListener('touchstart', unlockAudio, { passive: true });
+    document.addEventListener('pointerdown', unlockAudio, { passive: true });
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
     const worker = new Worker(URL.createObjectURL(blob));
@@ -226,6 +236,9 @@ const App: React.FC = () => {
       window.removeEventListener('pageshow', recoverAudio);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.clearInterval(healthCheckId);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('pointerdown', unlockAudio);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       worker.terminate();
       releaseWakeLock();
       audioService.disableBackgroundMode();

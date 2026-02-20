@@ -67,6 +67,7 @@ class AudioService {
   }
 
   private initCtx(): void {
+  private initCtx() {
     if (!this.audioCtx || this.audioCtx.state === 'closed') {
       this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({
         latencyHint: 'interactive',
@@ -79,6 +80,9 @@ class AudioService {
     if (!this.audioCtx) {
       return null;
     }
+  private async ensureContextReady() {
+    this.initCtx();
+    if (!this.audioCtx) return null;
 
     if (this.audioCtx.state !== 'running') {
       try {
@@ -90,6 +94,11 @@ class AudioService {
           return null;
         }
 
+      } catch (e) {
+        // iOS Safari can fail to resume interrupted contexts; recreate it.
+        this.audioCtx = null;
+        this.initCtx();
+        if (!this.audioCtx) return null;
         try {
           await this.audioCtx.resume();
         } catch {
@@ -120,6 +129,29 @@ class AudioService {
     audio.volume = type === 'tick' ? 0.7 : 1;
     audio.play().catch(() => {});
   }
+  }
+
+  public async unlock() {
+    const ctx = await this.ensureContextReady();
+    if (!ctx) return;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.value = 440;
+    gain.gain.setValueAtTime(0.00001, ctx.currentTime);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.02);
+  }
+
+  public async enableBackgroundMode() {
+    const ctx = await this.ensureContextReady();
+    if (!ctx) return;
 
   public async unlock(): Promise<void> {
     const ctx = await this.ensureContextReady();
@@ -146,6 +178,12 @@ class AudioService {
     await this.unlock();
     await this.enableBackgroundMode();
   }
+    this.keepAliveOsc = ctx.createOscillator();
+    this.keepAliveGain = ctx.createGain();
+
+    this.keepAliveOsc.type = 'sine';
+    this.keepAliveOsc.frequency.value = 20;
+    this.keepAliveGain.gain.value = 0.00001;
 
   public async enableBackgroundMode(): Promise<void> {
     const ctx = await this.ensureContextReady();
@@ -186,12 +224,19 @@ class AudioService {
       this.playFallback('tick');
       return;
     }
+  /**
+   * Short beep for countdown seconds.
+   */
+  public async playTick() {
+    const ctx = await this.ensureContextReady();
+    if (!ctx) return;
 
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
     osc.frequency.setValueAtTime(660, now);
+
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(0.2, now + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
@@ -207,6 +252,12 @@ class AudioService {
       this.playFallback('ding');
       return;
     }
+  /**
+   * Main alert ding for interval transitions.
+   */
+  public async playDing() {
+    const ctx = await this.ensureContextReady();
+    if (!ctx) return;
 
     const now = ctx.currentTime;
     const osc1 = ctx.createOscillator();
@@ -214,6 +265,7 @@ class AudioService {
     osc1.type = 'triangle';
     osc1.frequency.setValueAtTime(880, now);
     osc1.frequency.exponentialRampToValueAtTime(890, now + 0.1);
+
     gain1.gain.setValueAtTime(0, now);
     gain1.gain.linearRampToValueAtTime(0.6, now + 0.005);
     gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
@@ -222,6 +274,7 @@ class AudioService {
     const gain2 = ctx.createGain();
     osc2.type = 'sine';
     osc2.frequency.setValueAtTime(1760, now);
+
     gain2.gain.setValueAtTime(0, now);
     gain2.gain.linearRampToValueAtTime(0.3, now + 0.005);
     gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
