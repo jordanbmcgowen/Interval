@@ -166,8 +166,11 @@ const App: React.FC = () => {
       }
     };
 
-    const unlockAudio = () => {
-      audioService.unlock();
+    const handleUserGesture = () => {
+      audioService.unlockFromGesture();
+      if (statusRef.current === TimerStatus.RUNNING) {
+        audioService.enableBackgroundMode();
+      }
     };
 
     const handleVisibilityChange = () => {
@@ -188,8 +191,8 @@ const App: React.FC = () => {
       }
     }, 15000);
 
-    document.addEventListener('touchstart', unlockAudio, { passive: true });
-    document.addEventListener('pointerdown', unlockAudio, { passive: true });
+    document.addEventListener('touchstart', handleUserGesture, { passive: true });
+    document.addEventListener('pointerdown', handleUserGesture, { passive: true });
 
     const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
     const worker = new Worker(URL.createObjectURL(blob));
@@ -233,8 +236,8 @@ const App: React.FC = () => {
       window.removeEventListener('pageshow', recoverAudio);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.clearInterval(healthCheckId);
-      document.removeEventListener('touchstart', unlockAudio);
-      document.removeEventListener('pointerdown', unlockAudio);
+      document.removeEventListener('touchstart', handleUserGesture);
+      document.removeEventListener('pointerdown', handleUserGesture);
       worker.terminate();
       releaseWakeLock();
       audioService.disableBackgroundMode();

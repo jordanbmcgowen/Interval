@@ -113,6 +113,24 @@ class AudioService {
     }
   }
 
+  private primeFallbackAudioFromGesture(): void {
+    const audios = [this.tickFallback, this.dingFallback];
+    for (const audio of audios) {
+      audio.muted = true;
+      audio.currentTime = 0;
+      void audio
+        .play()
+        .then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.muted = false;
+        })
+        .catch(() => {
+          audio.muted = false;
+        });
+    }
+  }
+
   private playFallback(type: 'tick' | 'ding'): void {
     const audio = type === 'tick' ? this.tickFallback : this.dingFallback;
     audio.pause();
@@ -140,6 +158,25 @@ class AudioService {
     } catch {
       // noop
     }
+  }
+
+  public unlockFromGesture(): void {
+    this.initCtx();
+    this.audioCtx?.resume().catch(() => {});
+
+    if (this.audioCtx) {
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 440;
+      gain.gain.setValueAtTime(0.00001, this.audioCtx.currentTime);
+      osc.connect(gain);
+      gain.connect(this.audioCtx.destination);
+      osc.start();
+      osc.stop(this.audioCtx.currentTime + 0.02);
+    }
+
+    this.primeFallbackAudioFromGesture();
   }
 
   public async recoverForActiveSession(): Promise<void> {
