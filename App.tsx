@@ -151,8 +151,39 @@ const App: React.FC = () => {
   const currentTheme = THEMES[THEME_KEYS[state.intervalsCompleted % THEME_KEYS.length]];
   const workerRef = useRef<Worker | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const statusRef = useRef<TimerStatus>(TimerStatus.IDLE);
 
   useEffect(() => {
+    statusRef.current = state.status;
+  }, [state.status]);
+
+  useEffect(() => {
+    const recoverAudio = () => {
+      if (statusRef.current === TimerStatus.RUNNING) {
+        audioService.recoverForActiveSession();
+      } else {
+        audioService.unlock();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        recoverAudio();
+      }
+    };
+
+    document.addEventListener('touchstart', recoverAudio, { passive: true });
+    document.addEventListener('pointerdown', recoverAudio, { passive: true });
+    window.addEventListener('focus', recoverAudio);
+    window.addEventListener('pageshow', recoverAudio);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const healthCheckId = window.setInterval(() => {
+      if (statusRef.current === TimerStatus.RUNNING) {
+        audioService.recoverForActiveSession();
+      }
+    }, 15000);
+
     const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
     const worker = new Worker(URL.createObjectURL(blob));
     workerRef.current = worker;
@@ -189,6 +220,12 @@ const App: React.FC = () => {
     });
 
     return () => {
+      document.removeEventListener('touchstart', recoverAudio);
+      document.removeEventListener('pointerdown', recoverAudio);
+      window.removeEventListener('focus', recoverAudio);
+      window.removeEventListener('pageshow', recoverAudio);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(healthCheckId);
       worker.terminate();
       releaseWakeLock();
       audioService.disableBackgroundMode();
@@ -224,6 +261,14 @@ const App: React.FC = () => {
   const triggerAlertRef = useRef<() => void>();
   triggerAlertRef.current = async () => {
     audioService.playDing();
+
+    if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
+      new Notification('Interval alert', {
+        body: 'Interval transition reached.',
+        silent: false,
+      });
+    }
+
     if (settings.enableVibration && 'vibrate' in navigator) {
       navigator.vibrate([200, 100, 200]);
     }
@@ -247,8 +292,11 @@ const App: React.FC = () => {
   };
 
   const handleStart = async () => {
-    await audioService.unlock();
-    await audioService.enableBackgroundMode();
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+
+    await audioService.recoverForActiveSession();
     await requestWakeLock();
     triggerAlertRef.current?.();
     setState(prev => ({ ...prev, status: TimerStatus.RUNNING }));
