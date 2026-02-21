@@ -42,28 +42,47 @@ function createToneDataUrl(frequency: number, durationSeconds: number, volume = 
   return `data:audio/wav;base64,${btoa(binary)}`;
 }
 
+const POOL_SIZE = 3;
+const IS_MOBILE =
+  typeof navigator !== 'undefined' &&
+  /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 class AudioService {
-  private audioCtx: AudioContext | null;
-  private keepAliveOsc: OscillatorNode | null;
-  private keepAliveGain: GainNode | null;
-  private tickFallback: HTMLAudioElement;
-  private dingFallback: HTMLAudioElement;
+  private audioCtx: AudioContext | null = null;
+  private keepAliveOsc: OscillatorNode | null = null;
+  private keepAliveGain: GainNode | null = null;
+  private tickPool: HTMLAudioElement[];
+  private dingPool: HTMLAudioElement[];
+  private tickIdx = 0;
+  private dingIdx = 0;
+  private silentAudio: HTMLAudioElement;
+  private silentPlaying = false;
 
   constructor() {
-    this.audioCtx = null;
-    this.keepAliveOsc = null;
-    this.keepAliveGain = null;
-    this.tickFallback = this.createFallbackAudio(createToneDataUrl(660, 0.12));
-    this.dingFallback = this.createFallbackAudio(createToneDataUrl(880, 0.8));
+    const tickSrc = createToneDataUrl(660, 0.12);
+    const dingSrc = createToneDataUrl(880, 0.8);
+
+    this.tickPool = Array.from({ length: POOL_SIZE }, () =>
+      this.createAudioEl(tickSrc),
+    );
+    this.dingPool = Array.from({ length: POOL_SIZE }, () =>
+      this.createAudioEl(dingSrc),
+    );
+
+    // A silent 1-second WAV used as a keep-alive loop on mobile to prevent
+    // the OS from suspending the audio session when the screen locks.
+    this.silentAudio = this.createAudioEl(createToneDataUrl(1, 1, 0));
+    this.silentAudio.loop = true;
+    this.silentAudio.volume = 0.01;
   }
 
-  private createFallbackAudio(src: string): HTMLAudioElement {
-    const audio = new Audio(src);
-    audio.preload = 'auto';
-    audio.playsInline = true;
-    audio.setAttribute('playsinline', 'true');
-    audio.setAttribute('webkit-playsinline', 'true');
-    return audio;
+  private createAudioEl(src: string): HTMLAudioElement {
+    const a = new Audio(src);
+    a.preload = 'auto';
+    a.playsInline = true;
+    a.setAttribute('playsinline', 'true');
+    a.setAttribute('webkit-playsinline', 'true');
+    return a;
   }
 
   private initCtx(): void {
@@ -101,43 +120,58 @@ class AudioService {
     return this.audioCtx;
   }
 
+  /** Prime every HTMLAudioElement with a muted play() so the browser allows
+   *  unmuted playback later (required by mobile autoplay policies). */
   private async primeFallbackAudio(): Promise<void> {
-    const audios = [this.tickFallback, this.dingFallback];
-    for (const audio of audios) {
-      audio.muted = true;
-      audio.currentTime = 0;
-      await audio.play();
-      audio.pause();
-      audio.currentTime = 0;
-      audio.muted = false;
+    const all = [...this.tickPool, ...this.dingPool, this.silentAudio];
+    for (const a of all) {
+      try {
+        a.muted = true;
+        a.currentTime = 0;
+        await a.play();
+        a.pause();
+        a.currentTime = 0;
+      } catch {
+        /* noop */
+      }
+      a.muted = false;
     }
   }
 
+  /** Fire-and-forget version safe to call from synchronous gesture handlers. */
   private primeFallbackAudioFromGesture(): void {
-    const audios = [this.tickFallback, this.dingFallback];
-    for (const audio of audios) {
-      audio.muted = true;
-      audio.currentTime = 0;
-      void audio
+    const all = [...this.tickPool, ...this.dingPool, this.silentAudio];
+    for (const a of all) {
+      a.muted = true;
+      a.currentTime = 0;
+      void a
         .play()
         .then(() => {
-          audio.pause();
-          audio.currentTime = 0;
-          audio.muted = false;
+          a.pause();
+          a.currentTime = 0;
+          a.muted = false;
         })
         .catch(() => {
-          audio.muted = false;
+          a.muted = false;
         });
     }
   }
 
-  private playFallback(type: 'tick' | 'ding'): void {
-    const audio = type === 'tick' ? this.tickFallback : this.dingFallback;
-    audio.pause();
-    audio.currentTime = 0;
-    audio.volume = type === 'tick' ? 0.7 : 1;
-    audio.play().catch(() => {});
+  /** Play one element from the pool, rotating to avoid reuse conflicts. */
+  private playFromPool(
+    pool: HTMLAudioElement[],
+    idxKey: 'tickIdx' | 'dingIdx',
+    volume: number,
+  ): void {
+    const a = pool[this[idxKey]];
+    this[idxKey] = (this[idxKey] + 1) % pool.length;
+    a.pause();
+    a.currentTime = 0;
+    a.volume = volume;
+    a.play().catch(() => {});
   }
+
+  /* ── Public API ──────────────────────────────────────────── */
 
   public async unlock(): Promise<void> {
     const ctx = await this.ensureContextReady();
@@ -185,19 +219,27 @@ class AudioService {
   }
 
   public async enableBackgroundMode(): Promise<void> {
+    // 1. Web Audio keep-alive oscillator (inaudible 30 Hz tone)
     const ctx = await this.ensureContextReady();
-    if (!ctx || this.keepAliveOsc) {
-      return;
+    if (ctx && !this.keepAliveOsc) {
+      this.keepAliveOsc = ctx.createOscillator();
+      this.keepAliveGain = ctx.createGain();
+      this.keepAliveOsc.type = 'sine';
+      this.keepAliveOsc.frequency.value = 30;
+      this.keepAliveGain.gain.value = 0.00002;
+      this.keepAliveOsc.connect(this.keepAliveGain);
+      this.keepAliveGain.connect(ctx.destination);
+      this.keepAliveOsc.start();
     }
 
-    this.keepAliveOsc = ctx.createOscillator();
-    this.keepAliveGain = ctx.createGain();
-    this.keepAliveOsc.type = 'sine';
-    this.keepAliveOsc.frequency.value = 30;
-    this.keepAliveGain.gain.value = 0.00002;
-    this.keepAliveOsc.connect(this.keepAliveGain);
-    this.keepAliveGain.connect(ctx.destination);
-    this.keepAliveOsc.start();
+    // 2. HTMLAudioElement silent loop – keeps the mobile audio session
+    //    alive so the OS doesn't suspend sound when the screen locks.
+    if (!this.silentPlaying) {
+      this.silentPlaying = true;
+      this.silentAudio.play().catch(() => {
+        this.silentPlaying = false;
+      });
+    }
   }
 
   public disableBackgroundMode(): void {
@@ -215,14 +257,24 @@ class AudioService {
       this.keepAliveGain.disconnect();
       this.keepAliveGain = null;
     }
+
+    if (this.silentPlaying) {
+      this.silentAudio.pause();
+      this.silentAudio.currentTime = 0;
+      this.silentPlaying = false;
+    }
   }
 
   public async playTick(): Promise<void> {
     const ctx = await this.ensureContextReady();
-    if (!ctx) {
-      this.playFallback('tick');
-      return;
+
+    // On mobile, always play the HTMLAudioElement alongside Web Audio.
+    // Mobile browsers may silently suspend the AudioContext, so the
+    // HTMLAudioElement acts as a reliable fallback that keeps working.
+    if (!ctx || IS_MOBILE) {
+      this.playFromPool(this.tickPool, 'tickIdx', 0.7);
     }
+    if (!ctx) return;
 
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -241,10 +293,12 @@ class AudioService {
 
   public async playDing(): Promise<void> {
     const ctx = await this.ensureContextReady();
-    if (!ctx) {
-      this.playFallback('ding');
-      return;
+
+    // Always fire HTMLAudioElement on mobile for reliability.
+    if (!ctx || IS_MOBILE) {
+      this.playFromPool(this.dingPool, 'dingIdx', 1);
     }
+    if (!ctx) return;
 
     const now = ctx.currentTime;
     const osc1 = ctx.createOscillator();
